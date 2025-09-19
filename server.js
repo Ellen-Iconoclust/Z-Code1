@@ -1,165 +1,22 @@
-// Z-Code: GenZ Social Media App
-// Backend + Frontend in one file for Render/Replit/Glitch
-
+// server.js
 const express = require("express");
-const { v4: uuidv4 } = require("uuid");
 const bodyParser = require("body-parser");
-const WebSocket = require("ws");
+const { v4: uuidv4 } = require("uuid");
 const http = require("http");
+const WebSocket = require("ws");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(bodyParser.json());
-app.use(express.static("public"));
 
-let users = {};     // {username: {password, bio, avatar, tales, codes}}
-let sessions = {};  // {token: username}
-let tales = [];     // uploaded posts
-let chats = {};     // {user1_user2: [ {from,to,text,time} ]}
+let users = [];
+let tales = [];
+let chats = {};
+const admin = { username: "admin", password: "admin123" };
 
-// --- ADMIN ---
-const ADMIN_USER = "admin";
-const ADMIN_PASS = "admin123";
-
-// Helper: require login
-function auth(req, res, next) {
-  const token = req.headers["authorization"];
-  if (!token || !sessions[token]) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  req.user = sessions[token];
-  next();
-}
-
-// --- ROUTES ---
-
-// Register
-app.post("/register", (req, res) => {
-  const { username, password, avatar } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: "Missing username/password" });
-  }
-  if (users[username]) {
-    return res.status(400).json({ error: "User exists" });
-  }
-  users[username] = {
-    password,
-    bio: "",
-    avatar: avatar || "default",
-    tales: [],
-    codes: 0,
-  };
-  res.json({ success: true });
-});
-
-// Login
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
-    const token = uuidv4();
-    sessions[token] = username;
-    return res.json({ token, admin: true });
-  }
-  if (!users[username] || users[username].password !== password) {
-    return res.status(400).json({ error: "Invalid credentials" });
-  }
-  const token = uuidv4();
-  sessions[token] = username;
-  res.json({ token, admin: false });
-});
-
-// Profile
-app.get("/me", auth, (req, res) => {
-  res.json(users[req.user] || { admin: true });
-});
-
-app.post("/me", auth, (req, res) => {
-  const { bio, avatar } = req.body;
-  if (users[req.user]) {
-    if (bio !== undefined) users[req.user].bio = bio;
-    if (avatar !== undefined) users[req.user].avatar = avatar;
-  }
-  res.json({ success: true });
-});
-
-// Upload Tale
-app.post("/tale", auth, (req, res) => {
-  const { media, caption } = req.body;
-  const tale = {
-    id: uuidv4(),
-    user: req.user,
-    media,
-    caption,
-    approved: false,
-  };
-  tales.push(tale);
-  users[req.user].tales.push(tale.id);
-  res.json({ success: true, tale });
-});
-
-// Explore
-app.get("/explore", auth, (req, res) => {
-  res.json(tales.filter((t) => t.approved));
-});
-
-// Admin Approve
-app.post("/admin/approve", auth, (req, res) => {
-  if (req.user !== ADMIN_USER) return res.status(403).json({ error: "Forbidden" });
-  const { taleId } = req.body;
-  const tale = tales.find((t) => t.id === taleId);
-  if (tale) {
-    tale.approved = true;
-    users[tale.user].codes += 1;
-  }
-  res.json({ success: true });
-});
-
-// Admin View Users
-app.get("/admin/users", auth, (req, res) => {
-  if (req.user !== ADMIN_USER) return res.status(403).json({ error: "Forbidden" });
-  res.json(users);
-});
-
-// --- CHAT via WebSockets ---
-
-function chatKey(u1, u2) {
-  return [u1, u2].sort().join("_");
-}
-
-wss.on("connection", (ws) => {
-  ws.on("message", (msg) => {
-    try {
-      const data = JSON.parse(msg);
-
-      if (data.type === "register") {
-        ws.username = data.username;
-      }
-
-      if (data.type === "chat") {
-        const { from, to, text } = data;
-        const key = chatKey(from, to);
-        if (!chats[key]) chats[key] = [];
-        const chatMsg = { from, to, text, time: new Date() };
-        chats[key].push(chatMsg);
-
-        // Broadcast to all
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN && client.username === to) {
-            client.send(JSON.stringify({ type: "chat", chat: chatMsg }));
-          }
-        });
-      }
-    } catch (e) {
-      console.error("WS error", e);
-    }
-  });
-});
-
-// --- FRONTEND HTML ---
-// Everything inline so you only need server.js
-
+// Serve frontend
 app.get("/", (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -169,111 +26,197 @@ app.get("/", (req, res) => {
 <title>Z-Code</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body { font-family: Arial, sans-serif; margin:0; background:#fafafa; color:#111; }
-header { padding:10px; background:#111; color:#fff; text-align:center; }
-nav { display:flex; justify-content:space-around; padding:10px; background:#eee; }
-button { padding:8px 12px; margin:4px; }
-.dark { background:#111; color:#fff; }
-.card { border:1px solid #ccc; margin:10px; padding:10px; border-radius:8px; }
+  :root {
+    --bg-gradient: linear-gradient(135deg, #ff66cc, #6666ff, #00ffff);
+    --text-color: #111;
+    --card-bg: #fff;
+    --nav-bg: rgba(255,255,255,0.8);
+  }
+  [data-theme="dark"] {
+    --bg-gradient: linear-gradient(135deg, #0f0f0f, #222, #333);
+    --text-color: #eee;
+    --card-bg: #1e1e1e;
+    --nav-bg: rgba(20,20,20,0.8);
+  }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', sans-serif;
+    color: var(--text-color);
+    background: var(--bg-gradient);
+    background-size: 400% 400%;
+    animation: gradientMove 12s ease infinite;
+  }
+  @keyframes gradientMove {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  header {
+    padding: 15px;
+    text-align: center;
+    font-size: 24px;
+    font-weight: bold;
+  }
+  .nav {
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-around;
+    background: var(--nav-bg);
+    backdrop-filter: blur(10px);
+    padding: 10px 0;
+  }
+  .nav button {
+    background: none;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    transition: transform 0.2s;
+    color: var(--text-color);
+  }
+  .nav button:hover {
+    transform: scale(1.2);
+    color: hotpink;
+  }
+  .container {
+    padding: 20px;
+    margin-bottom: 80px;
+  }
+  .card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transition: transform 0.2s;
+  }
+  .card:hover {
+    transform: translateY(-5px);
+  }
+  .toggle {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    cursor: pointer;
+    padding: 5px 10px;
+    border-radius: 8px;
+    background: hotpink;
+    color: white;
+    font-size: 14px;
+    border: none;
+  }
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
-<body>
-<header><h1>Z-Code ⚡</h1></header>
-<nav>
-<button onclick="showPage('home')">Home</button>
-<button onclick="showPage('explore')">Explore</button>
-<button onclick="showPage('profile')">Profile</button>
-<button onclick="showPage('chat')">Chat</button>
+<body data-theme="light">
+<header>Z-Code 🚀</header>
+<button class="toggle" onclick="toggleTheme()">Dark Mode</button>
+<div id="app" class="container"></div>
+<nav class="nav">
+  <button onclick="showPage('home')"><i class="fas fa-home"></i></button>
+  <button onclick="showPage('explore')"><i class="fas fa-search"></i></button>
+  <button onclick="showPage('chat')"><i class="fas fa-comment-dots"></i></button>
+  <button onclick="showPage('profile')"><i class="fas fa-user"></i></button>
 </nav>
-<div id="content"></div>
 
 <script>
-let token = localStorage.getItem("token") || null;
-let me = null;
+  let currentUser = null;
+  let ws;
 
-async function api(path, opts={}) {
-  if (!opts.headers) opts.headers = {};
-  if (token) opts.headers["Authorization"] = token;
-  if (opts.body) opts.headers["Content-Type"] = "application/json";
-  let res = await fetch(path, opts);
-  return res.json();
-}
+  function toggleTheme(){
+    const body = document.body;
+    if(body.getAttribute("data-theme")==="dark"){
+      body.setAttribute("data-theme","light");
+      document.querySelector(".toggle").innerText="Dark Mode";
+    } else {
+      body.setAttribute("data-theme","dark");
+      document.querySelector(".toggle").innerText="Light Mode";
+    }
+  }
 
-async function login() {
-  const u = prompt("Username");
-  const p = prompt("Password");
-  let res = await api("/login", { method:"POST", body: JSON.stringify({username:u,password:p}) });
-  if (res.token) {
-    token = res.token;
-    localStorage.setItem("token", token);
-    alert("Logged in");
-    loadMe();
-  } else alert(res.error || "Failed");
-}
+  function showPage(page){
+    const app=document.getElementById("app");
+    if(page==="home"){
+      fetch("/tales").then(r=>r.json()).then(data=>{
+        app.innerHTML="<h2>Home</h2>"+data.map(t=>\`<div class='card'><b>@\${t.user}</b><p>\${t.text}</p></div>\`).join("");
+      });
+    }
+    if(page==="explore"){
+      app.innerHTML="<h2>Explore</h2><input placeholder='Search users...' oninput='searchUsers(this.value)'/><div id='exploreList'></div>";
+    }
+    if(page==="chat"){
+      app.innerHTML="<h2>Chat</h2><div id='chatBox' class='card' style='height:200px;overflow:auto;'></div><input id='chatMsg' placeholder='Type...' style='width:80%;'><button onclick='sendMsg()'>Send</button>";
+      setupWS();
+    }
+    if(page==="profile"){
+      app.innerHTML="<h2>Profile</h2><div class='card'>Username: "+(currentUser?currentUser.username:"Not logged in")+"</div><button onclick='uploadTale()'>Post Tale</button>";
+    }
+  }
 
-async function register() {
-  const u = prompt("New username");
-  const p = prompt("Password");
-  await api("/register", { method:"POST", body: JSON.stringify({username:u,password:p}) });
-  alert("Registered! Now login.");
-}
+  function searchUsers(q){
+    fetch("/users?q="+q).then(r=>r.json()).then(data=>{
+      document.getElementById("exploreList").innerHTML=data.map(u=>"<div class='card'>@"+u.username+"</div>").join("");
+    });
+  }
 
-async function loadMe() {
-  me = await api("/me");
+  function uploadTale(){
+    const text=prompt("Your Tale:");
+    if(text){
+      fetch("/tales",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user:currentUser.username,text})})
+      .then(()=>showPage("home"));
+    }
+  }
+
+  function setupWS(){
+    if(ws) return;
+    ws=new WebSocket("ws://"+location.host);
+    ws.onmessage=(msg)=>{
+      const chatBox=document.getElementById("chatBox");
+      chatBox.innerHTML+="<div>"+msg.data+"</div>";
+      chatBox.scrollTop=chatBox.scrollHeight;
+    };
+  }
+  function sendMsg(){
+    const msg=document.getElementById("chatMsg").value;
+    if(ws && msg){
+      ws.send(currentUser.username+": "+msg);
+      document.getElementById("chatMsg").value="";
+    }
+  }
+
+  // Fake login on load
+  currentUser={username:"User"+Math.floor(Math.random()*1000)};
+  users=[currentUser];
   showPage("home");
-}
-
-async function showPage(page) {
-  if (!token) { document.getElementById("content").innerHTML = "<button onclick='login()'>Login</button> <button onclick='register()'>Register</button>"; return; }
-  if (page=="home") {
-    document.getElementById("content").innerHTML = "<h2>Welcome "+ (me?me.bio||"":"") +"</h2><p>Upload a Tale</p><button onclick='uploadTale()'>New Tale</button>";
-  }
-  if (page=="explore") {
-    let ex = await api("/explore");
-    document.getElementById("content").innerHTML = "<h2>Explore</h2>"+ex.map(t=>"<div class='card'><b>"+t.user+"</b>: "+t.caption+"</div>").join("");
-  }
-  if (page=="profile") {
-    document.getElementById("content").innerHTML = "<h2>Profile</h2><p>Bio: "+me.bio+"</p><button onclick='editBio()'>Edit Bio</button>";
-  }
-  if (page=="chat") {
-    document.getElementById("content").innerHTML = "<h2>Chat</h2><div id='chatbox'></div><input id='to'><input id='msg'><button onclick='sendChat()'>Send</button>";
-  }
-}
-
-async function editBio() {
-  const b = prompt("New bio");
-  await api("/me", { method:"POST", body: JSON.stringify({bio:b}) });
-  loadMe();
-}
-
-async function uploadTale() {
-  const c = prompt("Caption");
-  await api("/tale", { method:"POST", body: JSON.stringify({media:'',caption:c}) });
-  alert("Tale uploaded, awaiting admin approval.");
-}
-
-let ws = new WebSocket(location.origin.replace(/^http/,"ws"));
-ws.onopen = ()=> { if(me) ws.send(JSON.stringify({type:"register",username:me.username})); };
-ws.onmessage = (ev)=> {
-  const d = JSON.parse(ev.data);
-  if(d.type=="chat") {
-    const cb = document.getElementById("chatbox");
-    if(cb) cb.innerHTML += "<p><b>"+d.chat.from+":</b> "+d.chat.text+"</p>";
-  }
-};
-
-function sendChat() {
-  const to = document.getElementById("to").value;
-  const text = document.getElementById("msg").value;
-  ws.send(JSON.stringify({type:"chat",from:me.username,to,text}));
-}
-
-loadMe();
 </script>
 </body>
 </html>
   `);
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log("Server running on " + PORT));
+// APIs
+app.get("/tales", (req,res)=>res.json(tales));
+app.post("/tales", (req,res)=>{
+  tales.push({id:uuidv4(),...req.body});
+  res.json({ok:true});
+});
+app.get("/users", (req,res)=>{
+  const q=req.query.q?.toLowerCase()||"";
+  res.json(users.filter(u=>u.username.toLowerCase().includes(q)));
+});
+
+// WebSocket for chat
+wss.on("connection", ws=>{
+  ws.on("message", msg=>{
+    wss.clients.forEach(client=>{
+      if(client.readyState===WebSocket.OPEN){
+        client.send(msg.toString());
+      }
+    });
+  });
+});
+
+const PORT=process.env.PORT||3000;
+server.listen(PORT, ()=>console.log("Server running on "+PORT));
+
