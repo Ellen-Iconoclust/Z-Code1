@@ -1,7 +1,7 @@
 {
-  "name": "zcode-all-in-one",
+  "name": "z-code",
   "version": "1.0.0",
-  "description": "Z-Code single-file fullstack app (frontend + backend + websocket) for quick deploy",
+  "description": "Z-Code social app",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,10 +9,11 @@
   "dependencies": {
     "express": "^4.18.2",
     "ws": "^8.13.0",
-    "body-parser": "^1.20.2",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "body-parser": "^1.20.2"
   },
   "engines": {
-    "node": "18.x"
+    "node": "20.x"
   }
 }
+
