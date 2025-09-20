@@ -12,15 +12,16 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(bodyParser.json());
+app.use(express.static(__dirname)); // serve static files (icons)
 
 let users = [];
 let tales = [];
+let sessions = {}; // persist sessions
+
 const avatars = ["❤️","✌️","💕","💖","🎶","😎","🤞","😶‍🌫️","😡","🤖"];
 const admin = { username: "admin", password: "admin123" };
 
-// Serve icons and PWA files dynamically
-app.get("/icon-192.png", (req,res)=>res.sendFile(path.join(__dirname,"icon-192.png")));
-app.get("/icon-512.png", (req,res)=>res.sendFile(path.join(__dirname,"icon-512.png")));
+// Serve PWA manifest
 app.get("/manifest.json", (req,res)=>{
   res.json({
     name: "Z-Code 🚀",
@@ -51,22 +52,33 @@ app.get("/", (req,res)=>{
 [data-theme="dark"] { --bg-gradient: linear-gradient(135deg,#0f0f0f,#222,#333); --text-color:#eee; --card-bg:#1e1e1e; --nav-bg: rgba(20,20,20,0.8);}
 body { margin:0;font-family:'Segoe UI',sans-serif;color:var(--text-color);background: var(--bg-gradient); background-size:400% 400%; animation:gradientMove 12s ease infinite;}
 @keyframes gradientMove { 0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%} }
-header{padding:15px;text-align:center;font-size:24px;font-weight:bold;}
-.nav{position:fixed;bottom:0;width:100%;display:flex;justify-content:space-around;background:var(--nav-bg);backdrop-filter: blur(10px);padding:10px 0;}
-.nav button{background:none;border:none;font-size:22px;cursor:pointer;transition:transform 0.2s;color:var(--text-color);}
-.nav button:hover{transform: scale(1.2);color: hotpink;}
+header{padding:15px;text-align:center;font-size:24px;font-weight:bold;position:relative;}
 .container{padding:20px;margin-bottom:80px;}
 .card{background:var(--card-bg);border-radius:12px;padding:15px;margin-bottom:15px;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition: transform 0.2s;}
 .card:hover{transform: translateY(-5px);}
-.toggle{position:absolute;top:15px;right:15px;cursor:pointer;padding:5px 10px;border-radius:8px;background: hotpink;color:white;font-size:14px;border:none;}
+.toggle{cursor:pointer;padding:5px 10px;border-radius:8px;background: hotpink;color:white;font-size:14px;border:none;position:absolute;top:15px;right:15px;}
 .avatar{font-size:40px;margin:5px;cursor:pointer;transition: transform 0.2s;}
 .avatar:hover{transform: scale(1.3);}
+.hamburger{position:absolute;top:15px;left:15px;cursor:pointer;font-size:24px;}
+.menu{display:none;position:absolute;top:50px;left:15px;background:var(--card-bg);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);padding:10px;z-index:100;}
+.menu button{display:block;width:100%;margin:5px 0;border:none;padding:8px;background:hotpink;color:white;border-radius:6px;cursor:pointer;}
+.nav{position:fixed;bottom:0;width:100%;display:flex;justify-content:space-around;background:var(--nav-bg);backdrop-filter: blur(10px);padding:10px 0;}
+.nav button{background:none;border:none;font-size:22px;cursor:pointer;transition:transform 0.2s;color:var(--text-color);}
+.nav button:hover{transform: scale(1.2);color: hotpink;}
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body data-theme="light">
-<header>Z-Code</header>
-<button class="toggle" onclick="toggleTheme()">Dark Mode</button>
+<header>
+  Z-Code 🚀
+  <span class="hamburger" onclick="toggleMenu()">☰</span>
+  <div class="menu" id="menu">
+    <button onclick="toggleTheme()">Dark Mode</button>
+    <button onclick="editProfile()">Edit Profile</button>
+    <button onclick="showLogs()">Account Logs</button>
+    <button onclick="logout()">Logout</button>
+  </div>
+</header>
 <div id="app" class="container"></div>
 <nav class="nav">
   <button onclick="showPage('home')"><i class="fas fa-home"></i></button>
@@ -77,22 +89,71 @@ header{padding:15px;text-align:center;font-size:24px;font-weight:bold;}
 <script>
 let currentUser=null, ws;
 const avatars = ${JSON.stringify(avatars)};
+const logs = [];
+
+function toggleMenu(){ 
+  const menu=document.getElementById("menu"); 
+  menu.style.display = menu.style.display==="block"?"none":"block";
+}
 
 function toggleTheme(){ 
   const body=document.body; 
-  if(body.getAttribute("data-theme")==="dark"){ body.setAttribute("data-theme","light"); document.querySelector(".toggle").innerText="Dark Mode";} 
-  else{ body.setAttribute("data-theme","dark"); document.querySelector(".toggle").innerText="Light Mode";}
+  if(body.getAttribute("data-theme")==="dark"){ body.setAttribute("data-theme","light"); } 
+  else{ body.setAttribute("data-theme","dark"); }
+}
+
+function saveSession(){
+  localStorage.setItem("zcode_user", JSON.stringify(currentUser));
+}
+function loadSession(){
+  const u = localStorage.getItem("zcode_user");
+  if(u){ currentUser=JSON.parse(u); return true; }
+  return false;
+}
+
+function logout(){ 
+  localStorage.removeItem("zcode_user"); 
+  currentUser=null; 
+  showLogin(); 
 }
 
 function showPage(page){
   const app=document.getElementById("app");
   if(!currentUser && page!=="login" && page!=="admin") return showLogin();
-  if(page==="home"){ fetch("/tales").then(r=>r.json()).then(data=>{ app.innerHTML="<h2>Home</h2>"+data.map(t=>\`<div class='card'>\${t.avatar||"👤"} <b>@\${t.user}</b><p>\${t.text}</p>\${t.image?'<br><img src="'+t.image+'" style="max-width:100%;border-radius:8px;">':''}</div>\`).join(""); }); }
+  if(page==="home"){ fetch("/tales").then(r=>r.json()).then(data=>{ 
+    app.innerHTML="<h2>Home</h2>"+data.map(t=>\`<div class='card'>\${t.avatar||"👤"} <b>@\${t.user}</b><p>\${t.text}</p>\${t.image?'<br><img src="'+t.image+'" style="max-width:100%;border-radius:8px;">':''}</div>\`).join(""); 
+  }); }
   if(page==="explore"){ app.innerHTML="<h2>Explore</h2><input placeholder='Search users...' oninput='searchUsers(this.value)'/><div id='exploreList'></div>"; }
   if(page==="chat"){ app.innerHTML="<h2>Chat</h2><div id='chatBox' class='card' style='height:200px;overflow:auto;'></div><input id='chatMsg' placeholder='Type...' style='width:80%;'><button onclick='sendMsg()'>Send</button>"; setupWS();}
   if(page==="profile"){ 
-    app.innerHTML=\`<h2>Profile</h2><div class='card'>ID: \${currentUser.id}<br>Username: \${currentUser.username}<br>Avatar: \${currentUser.avatar}</div><button onclick='showTaleUpload()'>Post Tale</button><h3>Change Avatar</h3>\`+avatars.map(a=>"<span class='avatar' onclick='setAvatar(\\'"+a+"\\')'>"+a+"</span>").join("");
+    app.innerHTML=\`<h2>Profile</h2><div class='card'>ID: \${currentUser.id}<br>Username: \${currentUser.username}<br>Avatar: \${currentUser.avatar}<br>Bio: \${currentUser.bio||''}</div><button onclick='showTaleUpload()'>Post Tale</button><h3>Change Avatar</h3>\`+avatars.map(a=>"<span class='avatar' onclick='setAvatar(\\'"+a+"\\')'>"+a+"</span>").join("");
   }
+}
+
+function editProfile(){
+  const app=document.getElementById("app");
+  app.innerHTML=\`
+    <h2>Edit Profile</h2>
+    <input placeholder='Username' id='editUsername' value='\${currentUser.username}'/><br><br>
+    <textarea placeholder='Bio' id='editBio'>\${currentUser.bio||''}</textarea><br><br>
+    <button onclick='saveProfile()'>Save</button>
+  \`;
+}
+
+function saveProfile(){
+  const username=document.getElementById("editUsername").value;
+  const bio=document.getElementById("editBio").value;
+  currentUser.username=username;
+  currentUser.bio=bio;
+  saveSession();
+  fetch("/updateUser",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(currentUser)});
+  showPage("profile");
+  logs.push("Profile updated at "+new Date().toLocaleString());
+}
+
+function showLogs(){
+  const app=document.getElementById("app");
+  app.innerHTML="<h2>Account Logs</h2><div>"+logs.join("<br>")+"</div>";
 }
 
 function showLogin(){
@@ -122,14 +183,14 @@ function registerUser(){
   const password=document.getElementById("regPassword").value;
   if(!username||!password)return alert("Enter username & password");
   fetch("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})})
-    .then(r=>r.json()).then(d=>{if(d.ok){currentUser=d.user; showPage("home");}else alert(d.msg);});
+    .then(r=>r.json()).then(d=>{if(d.ok){currentUser=d.user; saveSession(); showPage("home");}else alert(d.msg);});
 }
 
 function loginUser(){
   const username=document.getElementById("username").value;
   const password=document.getElementById("password").value;
   fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})})
-    .then(r=>r.json()).then(d=>{if(d.ok && !d.admin){currentUser=d.user; showPage("home");}else if(d.admin){alert("Admin logged in");showPage("home");} else alert(d.msg);});
+    .then(r=>r.json()).then(d=>{if(d.ok && !d.admin){currentUser=d.user; saveSession(); showPage("home");}else if(d.admin){alert("Admin logged in");showPage("home");} else alert(d.msg);});
 }
 
 function loginAdmin(){
@@ -139,7 +200,7 @@ function loginAdmin(){
     .then(r=>r.json()).then(d=>{if(d.ok && d.admin){alert("Admin logged in!");showPage("home");}else alert("Invalid credentials");});
 }
 
-function setAvatar(a){ currentUser.avatar=a; fetch("/updateAvatar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:currentUser.id,avatar:a})}); showPage("profile");}
+function setAvatar(a){ currentUser.avatar=a; saveSession(); fetch("/updateAvatar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:currentUser.id,avatar:a})}); showPage("profile");}
 
 function showTaleUpload(){
   const app=document.getElementById("app");
@@ -166,8 +227,9 @@ function searchUsers(q){ fetch("/users?q="+q).then(r=>r.json()).then(data=>{ doc
 function setupWS(){ if(ws)return; ws=new WebSocket("ws://"+location.host); ws.onmessage=(msg)=>{ const chatBox=document.getElementById("chatBox"); chatBox.innerHTML+="<div>"+msg.data+"</div>"; chatBox.scrollTop=chatBox.scrollHeight; } }
 function sendMsg(){ const msg=document.getElementById("chatMsg").value; if(ws&&msg){ ws.send(currentUser.username+": "+msg); document.getElementById("chatMsg").value=""; } }
 
-// On load
-showLogin();
+// Load session if available
+if(!loadSession()) showLogin();
+else showPage("home");
 </script>
 </body>
 </html>`);
@@ -177,7 +239,7 @@ showLogin();
 app.post("/register", (req,res)=>{
   const { username, password } = req.body;
   if(users.find(u=>u.username===username)) return res.json({ok:false, msg:"Username exists"});
-  const user = { id: "U"+Math.floor(Math.random()*10000), username, password, avatar:"👤" };
+  const user = { id: "U"+Math.floor(Math.random()*10000), username, password, avatar:"👤", bio:"" };
   users.push(user);
   res.json({ok:true, user});
 });
@@ -193,6 +255,15 @@ app.post("/login", (req,res)=>{
 app.post("/updateAvatar",(req,res)=>{
   let u=users.find(x=>x.id===req.body.id);
   if(u) u.avatar=req.body.avatar;
+  res.json({ok:true});
+});
+
+app.post("/updateUser",(req,res)=>{
+  let u=users.find(x=>x.id===req.body.id);
+  if(u){
+    u.username=req.body.username;
+    u.bio=req.body.bio;
+  }
   res.json({ok:true});
 });
 
